@@ -1,10 +1,7 @@
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
 use sha2::Sha256;
-use std::{
-    collections::BTreeMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::BTreeMap;
 use subtle::ConstantTimeEq;
 
 #[cfg(feature = "wasm")]
@@ -50,7 +47,7 @@ impl HmacSha256Signer {
         Ok(serde_json::to_vec(&sorted)?)
     }
 
-    fn calculate(&self, timestamp: i64, body: &[u8]) -> Result<String, anyhow::Error> {
+    fn calculate(&self, body: &[u8], timestamp: i64) -> Result<String, anyhow::Error> {
         let mut mac = HmacSha256::new_from_slice(self.0.as_bytes())?;
 
         mac.update(timestamp.to_string().as_bytes());
@@ -67,10 +64,18 @@ impl HmacSha256SignerTrait for HmacSha256Signer {
     }
 
     fn current_timestamp() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("System clock is before Unix epoch")
-            .as_secs() as i64
+        #[cfg(feature = "wasm")]
+        {
+            (js_sys::Date::now() / 1000.0) as i64
+        }
+
+        #[cfg(not(feature = "wasm"))]
+        {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("System clock is before Unix epoch")
+                .as_secs() as i64
+        }
     }
 
     fn sign<T: Serialize + ?Sized>(
@@ -81,7 +86,7 @@ impl HmacSha256SignerTrait for HmacSha256Signer {
         let timestamp = timestamp.unwrap_or_else(|| Self::current_timestamp());
 
         let payload = Self::build_sign_body(body)?;
-        let signature = self.calculate(timestamp, &payload)?;
+        let signature = self.calculate(&payload, timestamp)?;
 
         Ok((timestamp, signature))
     }
@@ -96,7 +101,7 @@ impl HmacSha256SignerTrait for HmacSha256Signer {
         // 接收端需要检查时间窗口
         // 1. 时间窗口检查（可选）
         if let Some(tolerance) = tolerance {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as i64;
+            let now = Self::current_timestamp();
 
             if tolerance < 0 || (now - timestamp).abs() > tolerance {
                 return Err(anyhow!(
@@ -107,7 +112,7 @@ impl HmacSha256SignerTrait for HmacSha256Signer {
 
         // 2. 计算签名
         let payload = Self::build_sign_body(body)?;
-        let expected = self.calculate(timestamp, &payload)?;
+        let expected = self.calculate(&payload, timestamp)?;
 
         let received_bytes = hex::decode(signature)
             .map_err(|_| anyhow!("invalid signature format: expected hexadecimal"))?;
@@ -131,11 +136,22 @@ impl HmacSha256SignerTrait for HmacSha256Signer {
 impl HmacSha256Signer {
     #[wasm_bindgen(constructor)]
     pub fn new(secret: String) -> HmacSha256Signer {
+        if cfg!(debug_assertions) {
+            console_error_panic_hook::set_once();
+        }
+
         HmacSha256Signer(secret)
     }
 
-    pub fn sign(&self, body: &[u8], timestamp: Option<i64>) -> Result<JsValue, JsValue> {
-        let (timestamp, signature) = HmacSha256SignerTrait::sign(self, &body, timestamp)
+    pub fn sign(&self, body: JsValue, timestamp: Option<i64>) -> Result<JsValue, JsValue> {
+        let timestamp = timestamp.unwrap_or_else(Self::current_timestamp);
+
+        let json = js_sys::JSON::stringify(&body)?;
+
+        let value: serde_json::Value = serde_json::from_str(&String::from(json))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        let (timestamp, signature) = HmacSha256SignerTrait::sign(self, &value, Some(timestamp))
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let result = js_sys::Object::new();
@@ -146,19 +162,24 @@ impl HmacSha256Signer {
             &JsValue::from_f64(timestamp as f64),
         )?;
 
-        js_sys::Reflect::set(&result, &"signature".into(), &JsValue::from_str(&signature))?;
+        js_sys::Reflect::set(&result, &"sign".into(), &JsValue::from_str(&signature))?;
 
         Ok(result.into())
     }
 
     pub fn verify(
         &self,
-        body: &[u8],
+        body: JsValue,
         timestamp: i64,
         signature: &str,
         tolerance: Option<i64>,
     ) -> Result<bool, JsValue> {
-        HmacSha256SignerTrait::verify(self, body, timestamp, signature, tolerance)
+        let json = js_sys::JSON::stringify(&body)?;
+
+        let value: serde_json::Value = serde_json::from_str(&String::from(json))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        HmacSha256SignerTrait::verify(self, &value, timestamp, signature, tolerance)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
@@ -199,6 +220,31 @@ mod tests {
                 false
             }
         };
+
+        assert!(valid);
+    }
+}
+
+#[cfg(all(test, feature = "wasm"))]
+mod wasm_tests {
+    use super::*;
+    use wasm_bindgen_test::*;
+
+    #[wasm_bindgen_test]
+    fn test_sign_and_verify() {
+        let signer = HmacSha256Signer::new("test-secret".to_string());
+
+        let timestamp = HmacSha256Signer::current_timestamp();
+
+        let body = br#"{"name":"test","appid":"123456"}"#;
+
+        let signature = signer.sign(&body[..], Some(timestamp)).unwrap();
+
+        assert!(!signature.1.is_empty());
+
+        let valid = signer
+            .verify(signature.0, &body[..], &signature.1, Some(300))
+            .unwrap();
 
         assert!(valid);
     }

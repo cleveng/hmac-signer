@@ -1,6 +1,6 @@
 [package]
 name = "hmac-signer"
-version = "1.0.2"
+version = "1.0.3"
 description = "Hmac Signer By Rust"
 authors = ["cleveng <cleveng@gmail.com>"]
 license = "MIT"
@@ -27,5 +27,6 @@ serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.149"
 
 js-sys = "0.3.107"
+console_error_panic_hook = "0.1.7"
 
 [dev-dependencies]
