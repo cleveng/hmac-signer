@@ -62,7 +62,7 @@ let signer = HmacSha256Signer::new("your-secret-key");
 let timestamp = 1793352268_i64;
 let body = br#"{"amount":100,"currency":"USD"}"#;
 
-let signature = signer.sign(timestamp, body)?;
+let signature = signer.sign(body, timestamp)?;
 
 println!("Signature: {}", signature);
 ```
@@ -71,8 +71,8 @@ println!("Signature: {}", signature);
 
 ```rust
 let valid = signer.verify(
-    timestamp,
     body,
+    timestamp,
     &signature,
     Some(300),
 )?;
@@ -86,8 +86,8 @@ Pass `None` as the tolerance parameter:
 
 ```rust
 let valid = signer.verify(
-    timestamp,
     body,
+    timestamp,
     &signature,
     None,
 )?;
@@ -119,7 +119,7 @@ const body = new TextEncoder().encode(
   })
 );
 
-const signature = signer.sign(timestamp, body);
+const signature = signer.sign(body, timestamp);
 
 console.log(signature);
 ```
@@ -127,7 +127,7 @@ console.log(signature);
 #### Verify a signature by typescript
 
 ```typescript
-const valid = signer.verify(timestamp, body, signature, 300n);
+const valid = signer.verify(body, timestamp, signature, 300n);
 
 console.log(valid);
 ```
@@ -137,7 +137,7 @@ console.log(valid);
 Pass `undefined`:
 
 ```typescript
-const valid = signer.verify(timestamp, body, signature, undefined);
+const valid = signer.verify(body, timestamp, signature, undefined);
 ```
 
 ## Signature Format
@@ -202,9 +202,9 @@ Generates a signature.
 ```rust
 fn sign(
     &self,
-    timestamp: i64,
     body: &[u8],
-) -> Result<String, anyhow::Error>
+    timestamp: Option<i64>,
+) -> Result<(i64, String), anyhow::Error>
 ```
 
 ### verify
@@ -214,8 +214,8 @@ Verifies a signature.
 ```rust
 fn verify(
     &self,
-    timestamp: i64,
     body: &[u8],
+    timestamp: i64,
     signature: &str,
     tolerance: Option<i64>,
 ) -> Result<bool, anyhow::Error>
@@ -226,7 +226,7 @@ fn verify(
 ### Native Rust
 
 ```bash
-cargo build --release
+cargo build --release -vvv
 ```
 
 Run tests:
@@ -253,6 +253,17 @@ Build the WASM package:
 
 ```bash
 wasm-pack build --target bundler --release -- --features wasm
+
+wasm-pack build \
+  --target bundler \
+  --release \
+  --scope cakioe \
+  --out-dir pkg \
+  --out-name hmac_signer \
+  -- --features wasm
+
+cd pkg
+npm stage publish --access public
 ```
 
 The generated npm package will be available in the `pkg/` directory.
