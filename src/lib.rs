@@ -1,7 +1,6 @@
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
 use sha2::Sha256;
-use std::collections::BTreeMap;
 use subtle::ConstantTimeEq;
 
 #[cfg(feature = "wasm")]
@@ -43,8 +42,8 @@ impl HmacSha256Signer {
             map.remove("sign");
         }
 
-        let sorted: BTreeMap<String, serde_json::Value> = serde_json::from_value(value)?;
-        Ok(serde_json::to_vec(&sorted)?)
+        // RFC 8785 JSON Canonicalization
+        Ok(serde_json_canonicalizer::to_vec(&value)?)
     }
 
     fn calculate(&self, body: &[u8], timestamp: i64) -> Result<String, anyhow::Error> {
