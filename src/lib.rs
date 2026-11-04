@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
 use sha2::Sha256;
@@ -5,8 +6,6 @@ use subtle::ConstantTimeEq;
 
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
-
-use anyhow::anyhow;
 
 pub trait HmacSha256SignerTrait {
     fn new(secret: impl Into<String>) -> Self;
@@ -35,23 +34,31 @@ pub struct HmacSha256Signer(String);
 
 impl HmacSha256Signer {
     fn build_sign_body<T: Serialize + ?Sized>(input: &T) -> Result<Vec<u8>, anyhow::Error> {
-        let mut value = serde_json::to_value(input)?;
+        let value = serde_json::to_value(input)?;
 
-        if let serde_json::Value::Object(ref mut map) = value {
-            map.remove("timestamp");
-            map.remove("sign");
-        }
+        let mut object = value
+            .as_object()
+            .cloned()
+            .ok_or_else(|| anyhow!("sign body must be a JSON object"))?;
 
-        // RFC 8785 JSON Canonicalization
-        Ok(serde_json_canonicalizer::to_vec(&value)?)
+        // 移除 sign、timestamp 字段
+        object.remove("sign");
+        object.remove("timestamp");
+
+        // RFC 8785
+        let canonical = serde_json_canonicalizer::to_vec(&object)?;
+
+        Ok(canonical)
     }
 
     fn calculate(&self, body: &[u8], timestamp: i64) -> Result<String, anyhow::Error> {
         let mut mac = HmacSha256::new_from_slice(self.0.as_bytes())?;
 
-        mac.update(timestamp.to_string().as_bytes());
-        mac.update(b".");
-        mac.update(body);
+        let mut payload = timestamp.to_string().into_bytes();
+        payload.push(b'.');
+        payload.extend_from_slice(body);
+
+        mac.update(&payload);
 
         Ok(hex::encode(mac.finalize().into_bytes()))
     }
@@ -118,15 +125,11 @@ impl HmacSha256SignerTrait for HmacSha256Signer {
 
         let expected_bytes = hex::decode(expected)?;
 
-        if received_bytes.len() != expected_bytes.len() {
-            return Err(anyhow!("signature verification failed: signature mismatch"));
+        if expected_bytes.len() != received_bytes.len() {
+            return Ok(false);
         }
 
-        if expected_bytes.ct_eq(&received_bytes).into() {
-            Ok(true)
-        } else {
-            Err(anyhow!("signature verification failed: signature mismatch"))
-        }
+        Ok(bool::from(expected_bytes.ct_eq(&received_bytes)))
     }
 }
 
@@ -192,7 +195,7 @@ mod tests {
         let signer = HmacSha256Signer::new("abcd");
 
         let payload = serde_json::json!({
-            "a": "b",
+            "username": "管理员",
             "c": 3
         });
 
@@ -205,12 +208,12 @@ mod tests {
         let signer = HmacSha256Signer::new("abcd");
 
         let payload = serde_json::json!({
-            "a": "b",
+            "username": "管理员",
             "c": 3
         });
 
-        let now = 1793599063_i64;
-        let sig = "88587a0a4305464c37938709dcc03c6cbff57fc86e3d384dee64a0a39b08d330".to_string();
+        let now = 1793754737_i64;
+        let sig = "44defe751b3cceb6a6d641d84137bab80a787086f7c23a046b190eed3d2caf2c".to_string();
 
         let valid = match signer.verify(&payload, now, &sig, None) {
             Ok(valid) => valid,

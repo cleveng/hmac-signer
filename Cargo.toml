@@ -1,6 +1,6 @@
 [package]
 name = "hmac-signer"
-version = "1.0.4"
+version = "1.0.5"
 description = "Hmac Signer By Rust"
 authors = ["cleveng <cleveng@gmail.com>"]
 license = "MIT"
